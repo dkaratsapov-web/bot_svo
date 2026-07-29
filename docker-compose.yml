@@ -1,0 +1,53 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # В контейнере Redis доступен по имени сервиса.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    ports:
+      # Нужен только в режиме webhook (за reverse-proxy с TLS).
+      - "${WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Опционально: ежедневный бэкап SQLite с ротацией.
+  backup:
+    build: .
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "while true; do
+         /app/scripts/backup.sh;
+         sleep 86400;
+       done"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+
+volumes:
+  redis-data:
