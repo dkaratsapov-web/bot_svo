@@ -125,9 +125,16 @@ ENVEOF
     fi
 
     # Порядок поиска токена: переменная -> файл -> интерактивный ввод.
-    # Вариант с файлом позволяет запускать установку в фоне, без живого
-    # терминала — это важно при нестабильном SSH.
+    # Вариант с файлом позволяет запускать установку в фоне (setsid/nohup),
+    # без живого терминала — это важно при нестабильном SSH.
     TOKEN_FILE="${TOKEN_FILE:-/root/.bot_token}"
+    token=""
+
+    # Проверяем терминал реальной попыткой открыть его: под setsid файл
+    # /dev/tty существует, но открытие падает с ENXIO (нет управляющего
+    # терминала), а `[ -r /dev/tty ]` этого не показывает.
+    tty_usable() { (: < /dev/tty) 2>/dev/null; }
+
     if [ -n "${BOT_TOKEN:-}" ]; then
         token="$BOT_TOKEN"
     elif [ -s "$TOKEN_FILE" ]; then
@@ -135,15 +142,17 @@ ENVEOF
         shred -u "$TOKEN_FILE" 2>/dev/null || rm -f "$TOKEN_FILE"
         log "токен взят из $TOKEN_FILE (файл удалён)"
     elif [ -t 0 ]; then
-        read -rsp 'Вставьте BOT_TOKEN (от @MasterBot) и нажмите Enter: ' token
+        printf 'Вставьте BOT_TOKEN (от @MasterBot) и нажмите Enter: '
+        # Ошибка чтения не должна прерывать установку (set -e)
+        read -rs token || token=""
         echo
-    elif [ -r /dev/tty ]; then
-        # Скрипт запущен через pipe (curl | bash) — читаем с терминала напрямую
-        read -rsp 'Вставьте BOT_TOKEN (от @MasterBot) и нажмите Enter: ' token < /dev/tty
+    elif tty_usable; then
+        # Скрипт запущен через pipe (curl | bash), но терминал доступен
+        printf 'Вставьте BOT_TOKEN (от @MasterBot) и нажмите Enter: ' > /dev/tty
+        read -rs token < /dev/tty || token=""
         echo
     else
-        token=""
-        warn "нет терминала и не задан BOT_TOKEN/$TOKEN_FILE — токен нужно вписать вручную"
+        warn "нет терминала и не задан BOT_TOKEN/$TOKEN_FILE"
     fi
 
     if [ -z "${token:-}" ]; then
@@ -178,6 +187,29 @@ if [ "$mode" = "webhook" ]; then
     COMPOSE_ARGS="-f docker-compose.prod.yml -f docker-compose.webhook.yml"
 else
     COMPOSE_ARGS="-f docker-compose.prod.yml"
+fi
+
+# Без токена бот ушёл бы в бесконечный рестарт с InvalidToken — лучше
+# честно остановиться и сказать, что осталось сделать.
+if ! grep -qE '^BOT_TOKEN=.+' .env; then
+    cat <<EOM
+
+$(printf '\033[1;33m[!] Установка почти завершена, но BOT_TOKEN не задан\033[0m')
+
+Стек не запускаю, иначе бот будет падать с InvalidToken.
+Осталось одно действие — передать токен и запустить:
+
+  printf 'BOT_TOKEN=' >> ${APP_DIR}/.env
+  nano ${APP_DIR}/.env          # допишите значение в конце строки BOT_TOKEN=
+
+либо со своей машины (работает и в bash, и в zsh):
+
+  printf 'BOT_TOKEN: '; read -rs T; echo
+  printf '%s' "\$T" | ssh root@<сервер> 'umask 077; cat > /root/.bot_token'; unset T
+  ssh root@<сервер> '${APP_DIR}/scripts/install-server.sh'
+
+EOM
+    exit 0
 fi
 
 # shellcheck disable=SC2086

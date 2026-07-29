@@ -58,10 +58,11 @@ GitHub → репозиторий → *Packages* → пакет `bot_svo` → *P
 независимые команды со своей машины, каждую можно повторять безопасно:
 
 ```bash
-# 1. Передать токен на сервер (ввод скрытый, в историю команд не попадает)
-read -rsp 'BOT_TOKEN: ' T && printf '%s' "$T" | \
-  ssh -o ServerAliveInterval=15 root@СЕРВЕР 'umask 077; cat > /root/.bot_token' && \
-  unset T && echo 'токен передан'
+# 1. Передать токен на сервер (ввод скрытый, в историю команд не попадает).
+#    Синтаксис работает и в bash, и в zsh — `read -rsp` в zsh не сработает.
+printf 'BOT_TOKEN: '; read -rs T; echo
+printf '%s' "$T" | ssh -o ServerAliveInterval=15 root@СЕРВЕР 'umask 077; cat > /root/.bot_token'
+unset T; echo 'токен передан'
 
 # 2. Запустить установку detached — живой терминал больше не нужен
 ssh -o ServerAliveInterval=15 root@СЕРВЕР \
