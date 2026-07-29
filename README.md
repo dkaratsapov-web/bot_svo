@@ -98,6 +98,10 @@ docker compose logs -f bot
 бэкап SQLite с ротацией 30 дней). При старте контейнер сам применяет миграции
 (`alembic upgrade head`) — см. `docker-entrypoint.sh`.
 
+> **Боевое развёртывание с автодеплоем** (Yandex Cloud + GHCR + Watchtower +
+> Caddy/Let's Encrypt) описано в [`DEPLOY.md`](DEPLOY.md): пуш в `main` →
+> сборка образа в GitHub Actions → сервер сам подхватывает новую версию.
+
 БД и бэкапы хранятся в томах `./data` и `./backups` (вне образа и вне
 репозитория).
 

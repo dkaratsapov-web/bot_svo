@@ -1,0 +1,21 @@
+# Caddy: автоматический HTTPS (Let's Encrypt) и обратный прокси к боту.
+# Домен и e-mail берутся из переменных окружения (см. .env: DOMAIN, ACME_EMAIL).
+
+{
+	email {$ACME_EMAIL}
+	# Для сертификата Минцифры вместо Let's Encrypt — задайте свой issuer здесь.
+	# По умолчанию Caddy использует Let's Encrypt (доверенный УЦ, подходит для MAX).
+}
+
+{$DOMAIN} {
+	encode gzip
+
+	# Проброс на контейнер бота (webhook: /max/webhook, проверка: /healthz).
+	# Заголовок X-Max-Bot-Api-Secret передаётся как есть.
+	reverse_proxy bot:8080
+
+	log {
+		output stdout
+		format json
+	}
+}
