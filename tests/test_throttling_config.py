@@ -1,5 +1,7 @@
 """Тесты анти-флуда и разбора конфигурации доступа."""
 
+import pytest
+
 from app.config import Settings
 from app.utils.throttling import AntiFlood
 
@@ -28,6 +30,48 @@ def test_admin_ids_parsing_and_check():
     assert s.is_admin(456) is True
     assert s.is_admin(999) is False
     assert s.is_admin(None) is False
+
+
+# Настройки читаются из окружения, а не из init-аргументов: pydantic-settings
+# обрабатывает эти пути по-разному (для сложных типов env-значение сперва
+# разбирается как JSON). Тесты ниже идут именно через окружение.
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("", []),                       # пустое значение роняло старт бота
+        ("123, 456 ,789", [123, 456, 789]),
+        ("111,abc,,222", [111, 222]),   # опечатка не должна ломать запуск
+        ("[1,2]", [1, 2]),              # JSON-подобная запись
+        ('["7","8"]', [7, 8]),
+        ("42", [42]),
+    ],
+)
+def test_admin_ids_from_env(monkeypatch, raw, expected):
+    monkeypatch.setenv("ADMIN_USER_IDS", raw)
+    assert Settings(_env_file=None).admin_user_ids == expected
+
+
+def test_admin_ids_absent_from_env(monkeypatch):
+    monkeypatch.delenv("ADMIN_USER_IDS", raising=False)
+    assert Settings(_env_file=None).admin_user_ids == []
+
+
+@pytest.mark.parametrize(
+    "var",
+    [
+        "ADMIN_CHAT_DEFAULT_ID",
+        "ADMIN_CHAT_JOIN_ID",
+        "ADMIN_CHAT_JOB_ID",
+        "ADMIN_CHAT_PSY_ID",
+        "ADMIN_CHAT_LAW_ID",
+        "ADMIN_CHAT_OTHER_ID",
+    ],
+)
+def test_empty_chat_ids_from_env_become_none(monkeypatch, var):
+    """Пустые значения чатов допустимы — бот стартует и падает на фолбэк."""
+    monkeypatch.setenv(var, "")
+    settings = Settings(_env_file=None)
+    assert getattr(settings, var.lower()) is None
 
 
 def test_admin_chat_routing_helpers():

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -38,7 +39,12 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="", alias="REDIS_URL")
 
     # --- Доступ ---
-    admin_user_ids: list[int] = Field(default_factory=list, alias="ADMIN_USER_IDS")
+    # NoDecode: без него pydantic-settings разбирает значение сложного типа
+    # (list) как JSON ещё до валидатора и падает на "ADMIN_USER_IDS=" —
+    # пустая строка не является валидным JSON.
+    admin_user_ids: Annotated[list[int], NoDecode] = Field(
+        default_factory=list, alias="ADMIN_USER_IDS"
+    )
 
     admin_chat_default_id: int | None = Field(default=None, alias="ADMIN_CHAT_DEFAULT_ID")
     admin_chat_join_id: int | None = Field(default=None, alias="ADMIN_CHAT_JOIN_ID")
@@ -68,13 +74,34 @@ class Settings(BaseSettings):
     @field_validator("admin_user_ids", mode="before")
     @classmethod
     def _parse_admin_ids(cls, value: object) -> list[int]:
-        if value is None or value == "":
+        """Принимает "1,2,3", список, None и пустую строку.
+
+        Некорректные элементы игнорируются: опечатка в .env не должна
+        приводить к падению бота при старте.
+        """
+        if value is None:
             return []
+        items: list[object]
         if isinstance(value, str):
-            return [int(x.strip()) for x in value.split(",") if x.strip()]
-        if isinstance(value, (list, tuple)):
-            return [int(x) for x in value]
-        return [int(value)]  # type: ignore[arg-type]
+            # Терпим и "1,2", и JSON-подобное "[1, 2]" — иначе admin молча
+            # потерял бы доступ из-за формата записи.
+            text = value.strip().strip("[]")
+            items = [x.strip() for x in text.split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            items = list(value)
+        else:
+            items = [value]
+
+        result: list[int] = []
+        for item in items:
+            text = str(item).strip().strip("\"'")
+            if not text:
+                continue
+            try:
+                result.append(int(text))
+            except ValueError:
+                continue
+        return result
 
     @field_validator(
         "admin_chat_default_id",
