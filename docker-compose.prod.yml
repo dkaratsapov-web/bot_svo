@@ -1,5 +1,6 @@
 # Production-стек для сервера (рег.облако / любой Ubuntu-VPS).
-# Образ бота тянется из GHCR; обновления накатывает Watchtower автоматически.
+# Образ бота тянется из GHCR; обновления накатывает systemd-таймер
+# (scripts/selfupdate.sh) — он же подтягивает изменения инфраструктуры.
 #
 # Режим polling (домен не нужен) — этот файл самодостаточен:
 #   docker compose -f docker-compose.prod.yml up -d
@@ -35,9 +36,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./backups:/app/backups
-    labels:
-      # Watchtower обновляет только контейнеры с этой меткой.
-      com.centurylinklabs.watchtower.enable: "true"
     # Порт наружу не публикуем: в polling он не нужен, в webhook доступ
     # идёт через Caddy из docker-compose.webhook.yml.
     expose:
@@ -78,22 +76,6 @@ services:
       timeout: 3s
       retries: 5
     mem_limit: 192m
-    logging: *default-logging
-
-  watchtower:
-    image: containrrr/watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Для приватного образа GHCR смонтируйте docker config с токеном:
-      # - ~/.docker/config.json:/config.json:ro
-    command: >
-      --label-enable
-      --cleanup
-      --interval 300
-    environment:
-      WATCHTOWER_NOTIFICATIONS_LEVEL: info
-    mem_limit: 96m
     logging: *default-logging
 
   backup:

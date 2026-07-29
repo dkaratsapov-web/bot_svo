@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import warnings
 from http import HTTPStatus
 
 from aiohttp import web
@@ -173,7 +174,12 @@ async def async_main() -> None:
     init_runtime(settings, bot, redis_client)
 
     runtime.notifier.start()
-    with contextlib.suppress(Exception):
+    # set_my_commands внутри вызывает change_info(), помеченный в maxapi как
+    # устаревший (его нет в официальной swagger-спецификации MAX). Меню команд
+    # — приятная, но необязательная деталь: гасим предупреждение и не падаем,
+    # если метод перестанет работать.
+    with contextlib.suppress(Exception), warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
         await bot.set_my_commands(*BOT_COMMANDS)
 
     log.info("bot_starting", mode=settings.mode)
