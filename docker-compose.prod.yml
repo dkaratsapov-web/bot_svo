@@ -37,6 +37,18 @@ services:
     # Порт наружу не публикуем — доступ только через Caddy.
     expose:
       - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen("http://localhost:8080/healthz", timeout=5).status == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     mem_limit: 512m
     logging: *default-logging
 
@@ -66,6 +78,12 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Профиль webhook: Caddy нужен только когда есть домен и MODE=webhook.
+    # Без домена стек поднимается в polling-режиме без этого сервиса:
+    #   docker compose -f docker-compose.prod.yml up -d
+    # С доменом (webhook):
+    #   docker compose -f docker-compose.prod.yml --profile webhook up -d
+    profiles: ["webhook"]
     ports:
       - "80:80"
       - "443:443"

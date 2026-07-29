@@ -51,6 +51,38 @@ Claude Code → git push main → GitHub Actions → GHCR (образ)
 > Это **новый, отдельный** сервер — сервер с сайтом не трогаем и его
 > конфигурацию не меняем.
 
+## 1a. Если домена пока нет — старт в режиме polling
+
+Домен и TLS нужны только для webhook. Чтобы запустить бота сразу, поднимите
+стек в режиме **polling**: бот сам опрашивает MAX, входящие подключения не
+нужны, Caddy не запускается (он вынесен в compose-профиль `webhook`).
+
+В `.env` укажите `MODE=polling` и оставьте `DOMAIN`/`WEBHOOK_*` пустыми, затем:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d          # без Caddy
+```
+
+Проверка изнутри сервера (порт наружу не публикуется):
+
+```bash
+docker compose -f docker-compose.prod.yml exec bot \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8080/healthz').read())"
+```
+
+Когда домен появится — выполните шаг 2, переключите `.env` на
+`MODE=webhook` (+ `DOMAIN`, `WEBHOOK_URL`, `WEBHOOK_SECRET`) и перезапустите
+уже с профилем `webhook`:
+
+```bash
+docker compose -f docker-compose.prod.yml --profile webhook up -d
+```
+
+> В polling-режиме библиотека предупреждает в логах, если у бота осталась
+> активная webhook-подписка («БОТ ИГНОРИРУЕТ POLLING!»): MAX в этом случае
+> отдаёт обновления в webhook, а не в polling. Снять подписку:
+> `docker compose -f docker-compose.prod.yml exec bot python -c "import asyncio;from app.main import build_bot;from app.config import get_settings;b=build_bot(get_settings());asyncio.run(b.delete_webhook())"`
+
 ## 2. Направить поддомен на новый сервер
 
 В панели управления DNS вашего домена (там же, где настроен сайт) добавьте

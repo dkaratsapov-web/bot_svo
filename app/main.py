@@ -99,19 +99,32 @@ async def _healthz(request: web.Request) -> web.Response:
     return web.json_response(status, status=code)
 
 
-async def run_webhook(bot: Bot, dp: Dispatcher, settings: Settings, redis_client) -> None:
+def build_web_app(redis_client) -> web.Application:
+    """Создаёт aiohttp-приложение с /healthz (нужен в обоих режимах)."""
     app = web.Application()
     app["redis"] = redis_client
     app.router.add_get("/healthz", _healthz)
+    return app
+
+
+async def start_web_app(
+    app: web.Application, host: str, port: int
+) -> web.AppRunner:
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host=host, port=port)
+    await site.start()
+    return runner
+
+
+async def run_webhook(bot: Bot, dp: Dispatcher, settings: Settings, redis_client) -> None:
+    app = build_web_app(redis_client)
 
     webhook = AiohttpMaxWebhook(dp=dp, bot=bot, secret=settings.webhook_secret or None)
     app.on_startup.append(webhook.on_startup)
     webhook.setup(app, path=settings.webhook_path)
 
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host=settings.web_host, port=settings.web_port)
-    await site.start()
+    runner = await start_web_app(app, settings.web_host, settings.web_port)
     log.info("webhook_started", host=settings.web_host, port=settings.web_port, path=settings.webhook_path)
 
     # Регистрируем подписку на webhook в MAX.
@@ -127,6 +140,22 @@ async def run_webhook(bot: Bot, dp: Dispatcher, settings: Settings, redis_client
     stop = asyncio.Event()
     try:
         await stop.wait()
+    finally:
+        await runner.cleanup()
+
+
+async def run_polling(bot: Bot, dp: Dispatcher, settings: Settings, redis_client) -> None:
+    """Long polling + служебный веб-сервер только с /healthz.
+
+    Health-эндпоинт поднимается и здесь, иначе healthcheck контейнера
+    (и внешний мониторинг) не имел бы к чему обращаться в polling-режиме.
+    """
+    runner = await start_web_app(
+        build_web_app(redis_client), settings.web_host, settings.web_port
+    )
+    log.info("health_server_started", host=settings.web_host, port=settings.web_port)
+    try:
+        await dp.start_polling(bot)
     finally:
         await runner.cleanup()
 
@@ -152,7 +181,7 @@ async def async_main() -> None:
         if settings.use_webhook:
             await run_webhook(bot, dp, settings, redis_client)
         else:
-            await dp.start_polling(bot)
+            await run_polling(bot, dp, settings, redis_client)
     finally:
         log.info("shutting_down")
         with contextlib.suppress(Exception):
