@@ -35,10 +35,12 @@ Claude Code → git push main → GitHub Actions → GHCR (образ)
 
 1. Панель рег.облака → **Виртуальные серверы** → **+ Новый ресурс**.
 2. ОС: **Ubuntu 22.04 LTS**.
-3. Тариф: минимум **2 vCPU / 2 ГБ RAM**, диск от 20 ГБ SSD. Тариф
-   `HP C1-M1-D10` (1 vCPU / 1 ГБ), как на текущем сервере с сайтом, для
-   бота (Python + Redis + Caddy + Watchtower в Docker) слишком мал — берите
-   на ступень выше, иначе возможны падения по памяти (OOM).
+3. Тариф: подойдёт `HP C1-M1-D10` (**1 vCPU / 1 ГБ / 10 ГБ**) — стек в него
+   укладывается (бот ~150 МБ + Redis + Caddy + Watchtower + Docker + ОС
+   ≈ 400–600 МБ), но **обязательно настройте swap** (шаг 3) и не отключайте
+   заданные в compose лимиты памяти и ротацию логов.
+   Комфортнее — `HP C2-M2-D40` (2 vCPU / 2 ГБ / 40 ГБ): запас по памяти и
+   заметно больше места под БД, бэкапы и образы.
 4. Регион: подойдёт тот же, что у сайта (например, Москва-2).
 5. Дождитесь создания, запишите **публичный IP** сервера.
 
@@ -62,9 +64,28 @@ bot.вашдомен.ру  →  <публичный IP НОВОГО сервер
 Дождитесь распространения DNS (обычно минуты, иногда до часа). Проверка:
 `ping bot.вашдомен.ру` должен показывать IP именно нового сервера.
 
-## 3. Установить Docker на сервере
+## 3. Настроить swap (обязательно на 1 ГБ RAM)
 
-Подключитесь по SSH и выполните:
+Без swap на тарифе с 1 ГБ памяти OOM-killer может внезапно убить бота или
+Redis. Подключитесь по SSH и создайте swap-файл 2 ГБ:
+
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab   # автоподключение после перезагрузки
+
+# Реже выгружать в swap (swap как страховка, а не основной режим)
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swappiness.conf
+sudo sysctl -p /etc/sysctl.d/99-swappiness.conf
+
+free -h   # проверка: в строке Swap должно быть 2.0Gi
+```
+
+> На тарифе с 2 ГБ и выше swap тоже полезен, но уже не критичен.
+
+## 4. Установить Docker на сервере
 
 ```bash
 sudo apt-get update
@@ -81,7 +102,7 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plu
 sudo usermod -aG docker $USER && newgrp docker   # docker без sudo
 ```
 
-## 4. Опубликовать первый образ (GitHub Actions)
+## 5. Опубликовать первый образ (GitHub Actions)
 
 1. Смёржите рабочую ветку в `main` (или переименуйте её в `main`) — workflow
    `.github/workflows/docker-publish.yml` запускается на пуш в `main`.
@@ -97,7 +118,7 @@ sudo usermod -aG docker $USER && newgrp docker   # docker без sudo
    > `docker-compose.prod.yml` монтирование `~/.docker/config.json` в
    > контейнер `watchtower`.
 
-## 5. Развернуть на сервере
+## 6. Развернуть на сервере
 
 ```bash
 git clone https://github.com/dkaratsapov-web/bot_svo.git
@@ -138,7 +159,7 @@ PRIVACY_POLICY_URL=https://вашдомен.ру/privacy
 При старте бот сам зарегистрирует webhook в MAX (`POST /subscriptions`), а Caddy
 выпустит TLS-сертификат для `DOMAIN`.
 
-## 6. Проверить
+## 7. Проверить
 
 ```bash
 curl https://bot.вашдомен.ру/healthz
@@ -147,14 +168,14 @@ curl https://bot.вашдомен.ру/healthz
 
 Напишите боту `/start` в MAX — должно прийти меню с двумя кнопками.
 
-## 7. Как теперь работает автодеплой
+## 8. Как теперь работает автодеплой
 
 Дальше вам (и ИИ) достаточно **пушить изменения в `main`**:
 
 1. Claude Code вносит правки и пушит ветку, вы мёржите PR в `main`
    (или ИИ пушит прямо в `main`, если так настроите).
 2. GitHub Actions собирает новый образ и кладёт в GHCR.
-3. **Watchtower** (интервал 120 с) видит новый `:latest`, скачивает его и
+3. **Watchtower** (интервал 300 с) видит новый `:latest`, скачивает его и
    пересоздаёт контейнер `bot` — со сбросом на новую версию без ручных действий.
 
 Миграции БД применяются автоматически при старте контейнера
@@ -183,3 +204,11 @@ docker compose -f docker-compose.prod.yml restart caddy # перечитать C
   («Сеть» в карточке сервера в рег.облаке).
 - **Потеря данных при пересоздании.** БД и бэкапы лежат в томах `./data` и
   `./backups` на хосте — обновление образа их не трогает.
+- **Контейнер падает / перезапускается на 1 ГБ RAM.** Проверьте swap
+  (`free -h`) — он должен быть включён (шаг 3). Посмотрите, не убил ли процесс
+  OOM-killer: `dmesg | grep -i "killed process"`. В `docker stats` видно
+  реальное потребление. Если упирается в лимиты — перейдите на `HP C2-M2-D40`.
+- **Кончается место на диске (10 ГБ).** Проверьте `df -h` и
+  `docker system df`. Освободить: `docker system prune -af --volumes`
+  (осторожно: удалит неиспользуемые тома) и почистите старые бэкапы в
+  `./backups` (скрипт сам держит только 30 дней).

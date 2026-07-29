@@ -1,4 +1,4 @@
-# Production-стек для сервера (Yandex Cloud VM / любой Ubuntu-VPS).
+# Production-стек для сервера (рег.облако / любой Ubuntu-VPS).
 # Образ бота тянется из GHCR; обновления накатывает Watchtower автоматически.
 #
 # Запуск на сервере:
@@ -6,6 +6,17 @@
 #
 # Требуется заполненный .env (см. .env.example), в т.ч. IMAGE, DOMAIN, ACME_EMAIL,
 # MODE=webhook, WEBHOOK_URL=https://$DOMAIN/max/webhook.
+#
+# Конфигурация рассчитана на скромный сервер (1 vCPU / 1 ГБ / 10 ГБ):
+# ограничена память Redis, включена ротация логов, заданы лимиты памяти.
+# На 1 ГБ обязательно настройте swap — см. DEPLOY.md, шаг 3.
+
+# Ротация логов: без неё JSON-логи structlog со временем забьют диск.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   bot:
@@ -26,11 +37,22 @@ services:
     # Порт наружу не публикуем — доступ только через Caddy.
     expose:
       - "8080"
+    mem_limit: 512m
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    # maxmemory + volatile-lru: под вытеснение попадают только ключи с TTL
+    # (идемпотентность), FSM-состояния незавершённых анкет сохраняются.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - volatile-lru
     volumes:
       - redis-data:/data
     healthcheck:
@@ -38,6 +60,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    mem_limit: 192m
+    logging: *default-logging
 
   caddy:
     image: caddy:2-alpine
@@ -54,6 +78,8 @@ services:
       - caddy-config:/config
     depends_on:
       - bot
+    mem_limit: 128m
+    logging: *default-logging
 
   watchtower:
     image: containrrr/watchtower
@@ -65,9 +91,11 @@ services:
     command: >
       --label-enable
       --cleanup
-      --interval 120
+      --interval 300
     environment:
       WATCHTOWER_NOTIFICATIONS_LEVEL: info
+    mem_limit: 96m
+    logging: *default-logging
 
   backup:
     image: ${IMAGE:-ghcr.io/dkaratsapov-web/bot_svo:latest}
@@ -79,6 +107,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./backups:/app/backups
+    mem_limit: 64m
+    logging: *default-logging
 
 volumes:
   redis-data:
