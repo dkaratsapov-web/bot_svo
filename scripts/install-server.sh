@@ -124,15 +124,26 @@ TZ=Europe/Moscow
 ENVEOF
     fi
 
+    # Порядок поиска токена: переменная -> файл -> интерактивный ввод.
+    # Вариант с файлом позволяет запускать установку в фоне, без живого
+    # терминала — это важно при нестабильном SSH.
+    TOKEN_FILE="${TOKEN_FILE:-/root/.bot_token}"
     if [ -n "${BOT_TOKEN:-}" ]; then
         token="$BOT_TOKEN"
+    elif [ -s "$TOKEN_FILE" ]; then
+        token="$(tr -d '[:space:]' < "$TOKEN_FILE")"
+        shred -u "$TOKEN_FILE" 2>/dev/null || rm -f "$TOKEN_FILE"
+        log "токен взят из $TOKEN_FILE (файл удалён)"
     elif [ -t 0 ]; then
         read -rsp 'Вставьте BOT_TOKEN (от @MasterBot) и нажмите Enter: ' token
         echo
-    else
+    elif [ -r /dev/tty ]; then
         # Скрипт запущен через pipe (curl | bash) — читаем с терминала напрямую
         read -rsp 'Вставьте BOT_TOKEN (от @MasterBot) и нажмите Enter: ' token < /dev/tty
         echo
+    else
+        token=""
+        warn "нет терминала и не задан BOT_TOKEN/$TOKEN_FILE — токен нужно вписать вручную"
     fi
 
     if [ -z "${token:-}" ]; then

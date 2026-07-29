@@ -51,6 +51,29 @@ GitHub → репозиторий → *Packages* → пакет `bot_svo` → *P
 *Change visibility* → **Public**. Иначе сервер не сможет скачать образ.
 (Альтернатива: `docker login ghcr.io` с PAT, имеющим право `read:packages`.)
 
+### Вариант для нестабильного SSH
+
+Если соединение с сервером рвётся (`Connection reset by peer`), запускайте
+установку **в фоне на сервере** — тогда обрыв сессии ей не помешает. Три
+независимые команды со своей машины, каждую можно повторять безопасно:
+
+```bash
+# 1. Передать токен на сервер (ввод скрытый, в историю команд не попадает)
+read -rsp 'BOT_TOKEN: ' T && printf '%s' "$T" | \
+  ssh -o ServerAliveInterval=15 root@СЕРВЕР 'umask 077; cat > /root/.bot_token' && \
+  unset T && echo 'токен передан'
+
+# 2. Запустить установку detached — живой терминал больше не нужен
+ssh -o ServerAliveInterval=15 root@СЕРВЕР \
+  'curl -fsSL https://raw.githubusercontent.com/dkaratsapov-web/bot_svo/main/scripts/install-server.sh -o /root/install.sh && chmod +x /root/install.sh && setsid nohup /root/install.sh >/root/install.log 2>&1 </dev/null & echo запущено'
+
+# 3. Посмотреть, чем закончилось (повторяйте, пока не увидите "Установка завершена")
+ssh root@СЕРВЕР 'tail -40 /root/install.log'
+```
+
+Скрипт сам подхватит токен из `/root/.bot_token` и **удалит файл** после
+использования.
+
 ## Проверка после установки
 
 ```bash
