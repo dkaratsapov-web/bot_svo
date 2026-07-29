@@ -12,7 +12,7 @@ from app.db import repo
 from app.db.models import ApplicationStatus, Direction
 from app.db.session import session_scope
 from app.handlers import helpers
-from app.handlers.helpers import send
+from app.handlers.helpers import render
 from app.logging_setup import get_logger
 from app.runtime import runtime
 from app.services import applications
@@ -34,22 +34,22 @@ _PAYLOAD_TO_DIRECTION = {v: k for k, v in keyboards.CONSULT_DIRECTION_PAYLOAD.it
 async def ask_direction(event, context: BaseContext) -> None:
     await context.set_state(ConsultSG.direction)
     await context.update_data(flow="consult")
-    await send(event, texts.CONSULT_CHOOSE_DIRECTION, keyboards.consult_directions())
+    await render(event, context, texts.CONSULT_CHOOSE_DIRECTION, keyboards.consult_directions())
 
 
 async def ask_fio(event, context: BaseContext) -> None:
     await context.set_state(ConsultSG.fio)
-    await send(event, texts.ASK_FIO, keyboards.text_step(back=True))
+    await render(event, context, texts.ASK_FIO, keyboards.text_step(back=True))
 
 
 async def ask_phone(event, context: BaseContext) -> None:
     await context.set_state(ConsultSG.phone)
-    await send(event, texts.ASK_PHONE, keyboards.phone_step(back=True))
+    await render(event, context, texts.ASK_PHONE, keyboards.phone_step(back=True))
 
 
 async def ask_free_text(event, context: BaseContext) -> None:
     await context.set_state(ConsultSG.free_text)
-    await send(event, texts.ASK_FREE_TEXT, keyboards.text_step(back=True))
+    await render(event, context, texts.ASK_FREE_TEXT, keyboards.text_step(back=True))
 
 
 async def show_confirm(event, context: BaseContext) -> None:
@@ -61,7 +61,7 @@ async def show_confirm(event, context: BaseContext) -> None:
         fio=data.get("fio", "—"),
         phone=data.get("phone", "—"),
     )
-    await send(event, text, keyboards.consult_confirm())
+    await render(event, context, text, keyboards.consult_confirm())
 
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +78,7 @@ async def choose_direction(event, context: BaseContext, suffix: str) -> None:
     direction = suffix  # job|psy|law|other
     if direction not in _PAYLOAD_TO_DIRECTION.values() and direction not in Direction.__members__:
         # Неизвестное направление — переспрашиваем
-        await send(event, texts.STALE_BUTTON, keyboards.consult_directions())
+        await render(event, context, texts.STALE_BUTTON, keyboards.consult_directions())
         return
     await context.update_data(direction=direction)
     _, has_consent, _ = await helpers.ensure_user(event)
@@ -154,7 +154,7 @@ async def _after_phone(event, context: BaseContext) -> None:
 async def input_free_text(event, context: BaseContext) -> None:
     text = (event.message.body.text or "").strip()
     if not text:
-        await send(event, texts.ASK_FREE_TEXT, keyboards.text_step(back=True))
+        await render(event, context, texts.ASK_FREE_TEXT, keyboards.text_step(back=True))
         return
     await context.update_data(free_text=text[:2000])
     await show_confirm(event, context)
@@ -179,8 +179,8 @@ async def go_back(event, context: BaseContext) -> None:
     elif state == str(ConsultSG.confirm):
         await (ask_free_text if is_free else ask_phone)(event, context)
     else:
-        await context.clear()
-        await helpers.show_main_menu(event)
+        await helpers.clear_keeping_screen(context)
+        await helpers.show_main_menu(event, context)
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +188,7 @@ async def go_back(event, context: BaseContext) -> None:
 # --------------------------------------------------------------------------- #
 @router.message_callback(Payload(keyboards.P_CONSULT_RESTART), StateFilter(ConsultSG))
 async def restart(event, context: BaseContext) -> None:
-    await context.set_data({})
+    await helpers.clear_keeping_screen(context)
     await ask_direction(event, context)
 
 
@@ -223,23 +223,26 @@ async def _do_submit(event, context: BaseContext, *, force: bool) -> None:
         )
 
     if result.duplicate and result.consultation is not None:
-        await send(
+        await render(
             event,
+            context,
             texts.DUPLICATE.format(ticket=result.consultation.ticket),
             keyboards.duplicate(keyboards.P_CONSULT_FORCE),
         )
         return
 
     con = result.consultation
-    await context.clear()
-    await send(
+    # Рендерим до clear(): иначе id экрана пропадёт и финал уедет новым сообщением
+    await render(
         event,
+        context,
         texts.CONSULT_DONE.format(
             ticket=con.ticket,
             direction=texts.DIRECTION_TITLES[con.direction.value],
         ),
         keyboards.to_menu(),
     )
+    await context.clear()
     try:
         await runtime.notifier.notify(con)
     except Exception as exc:  # noqa: BLE001
@@ -251,12 +254,12 @@ async def _do_submit(event, context: BaseContext, *, force: bool) -> None:
 # --------------------------------------------------------------------------- #
 @router.message_created(StateFilter(ConsultSG.direction))
 async def direction_text_fallback(event, context: BaseContext) -> None:
-    await send(event, texts.USE_BUTTONS, keyboards.consult_directions())
+    await render(event, context, texts.USE_BUTTONS + "\n\n" + texts.CONSULT_CHOOSE_DIRECTION, keyboards.consult_directions())
 
 
 @router.message_created(StateFilter(ConsultSG.confirm))
 async def confirm_text_fallback(event, context: BaseContext) -> None:
-    await send(event, texts.USE_BUTTONS, keyboards.consult_confirm())
+    await render(event, context, texts.USE_BUTTONS, keyboards.consult_confirm())
 
 
 # --------------------------------------------------------------------------- #
@@ -266,9 +269,9 @@ async def _handle_invalid(event, context: BaseContext, field: str, err_text: str
     count = await helpers.bump_error(context, field)
     if count >= MAX_ERRORS:
         await _save_draft(context, event)
-        await send(event, texts.TOO_MANY_ERRORS, keyboards.contact_operator(runtime.operator_url()))
+        await render(event, context, texts.TOO_MANY_ERRORS, keyboards.contact_operator(runtime.operator_url()))
         return
-    await send(event, err_text, kb)
+    await render(event, context, err_text, kb)
 
 
 async def _save_draft(context: BaseContext, event) -> None:
@@ -288,4 +291,4 @@ async def _save_draft(context: BaseContext, event) -> None:
             status=ApplicationStatus.draft,
         )
         await repo.add_event(session, type="consult_draft_saved", user_id=user.id)
-    await context.clear()
+    await helpers.clear_keeping_screen(context)

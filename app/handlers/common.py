@@ -10,7 +10,7 @@ from maxapi.filters.command import Command, CommandStart
 from app import keyboards, texts
 from app.config import get_settings
 from app.handlers import helpers
-from app.handlers.helpers import send
+from app.handlers.helpers import render, send
 from app.states import ConsentSG, ConsultSG, JoinSG
 from app.utils.filters import Payload
 
@@ -24,28 +24,29 @@ fallback_router = Router()
 # --------------------------------------------------------------------------- #
 @router.message_created(CommandStart())
 async def cmd_start(event, context: BaseContext) -> None:
+    # /start начинает диалог заново — новый экран здесь уместен
     await context.clear()
     await helpers.ensure_user(event)
-    await helpers.show_main_menu(event)
+    await helpers.show_main_menu(event, context)
 
 
 @router.bot_started()
 async def on_bot_started(event, context: BaseContext) -> None:
     await context.clear()
     await helpers.ensure_user(event)
-    await helpers.show_main_menu(event)
+    await helpers.show_main_menu(event, context)
 
 
 @router.message_created(Command("menu"))
 async def cmd_menu(event, context: BaseContext) -> None:
-    await context.clear()
-    await helpers.show_main_menu(event)
+    await helpers.clear_keeping_screen(context)
+    await helpers.show_main_menu(event, context)
 
 
 @router.message_callback(Payload(keyboards.P_MENU))
 async def cb_menu(event, context: BaseContext) -> None:
-    await context.clear()
-    await helpers.show_main_menu(event)
+    await helpers.clear_keeping_screen(context)
+    await helpers.show_main_menu(event, context)
 
 
 # --------------------------------------------------------------------------- #
@@ -62,14 +63,14 @@ async def cmd_help(event, context: BaseContext) -> None:
 # --------------------------------------------------------------------------- #
 @router.message_created(Command("cancel"))
 async def cmd_cancel(event, context: BaseContext) -> None:
-    await context.clear()
-    await send(event, texts.CANCELLED, keyboards.main_menu())
+    await helpers.clear_keeping_screen(context)
+    await render(event, context, texts.CANCELLED, keyboards.main_menu())
 
 
 @router.message_callback(Payload(keyboards.P_CANCEL))
 async def cb_cancel(event, context: BaseContext) -> None:
-    await context.clear()
-    await send(event, texts.CANCELLED, keyboards.main_menu())
+    await helpers.clear_keeping_screen(context)
+    await render(event, context, texts.CANCELLED, keyboards.main_menu())
 
 
 # --------------------------------------------------------------------------- #
@@ -113,19 +114,22 @@ async def _rerender_current(event, context: BaseContext) -> bool:
 @fallback_router.message_callback()
 async def stale_callback(event, context: BaseContext) -> None:
     """Нажата устаревшая кнопка (payload не совпал с текущим состоянием)."""
-    await helpers.ack(event, texts.STALE_BUTTON)
     if not await _rerender_current(event, context):
-        await helpers.show_main_menu(event)
+        await helpers.show_main_menu(event, context)
 
 
 @fallback_router.message_created(StateFilter(None))
 async def free_text_no_state(event, context: BaseContext) -> None:
     """Произвольный текст вне активного сценария → главное меню."""
-    await send(event, texts.USE_BUTTONS, keyboards.main_menu())
+    await render(event, context, texts.USE_BUTTONS + "\n\n" + texts.MAIN_MENU, keyboards.main_menu())
 
 
 @fallback_router.message_created()
 async def free_text_in_state(event, context: BaseContext) -> None:
-    """Произвольный текст на шаге без специального обработчика."""
-    await send(event, texts.USE_BUTTONS)
-    await _rerender_current(event, context)
+    """Произвольный текст на шаге без специального обработчика.
+
+    Повторно показываем актуальный шаг на том же экране — отдельное
+    сообщение «воспользуйтесь кнопками» только засоряло бы диалог.
+    """
+    if not await _rerender_current(event, context):
+        await render(event, context, texts.USE_BUTTONS + "\n\n" + texts.MAIN_MENU, keyboards.main_menu())

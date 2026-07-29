@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.db import repo
 from app.db.session import session_scope
 from app.handlers import helpers
-from app.handlers.helpers import send
+from app.handlers.helpers import render
 from app.states import ConsentSG
 from app.utils.filters import Payload
 
@@ -23,7 +23,7 @@ async def request_consent(event, context: BaseContext, flow: str, direction: str
     settings = get_settings()
     await context.set_state(ConsentSG.wait)
     await context.update_data(pending_flow=flow, pending_direction=direction)
-    await send(event, texts.CONSENT, keyboards.consent(settings.privacy_policy_url))
+    await render(event, context, texts.CONSENT, keyboards.consent(settings.privacy_policy_url))
 
 
 async def _resume_pending(event, context: BaseContext) -> None:
@@ -40,7 +40,7 @@ async def _resume_pending(event, context: BaseContext) -> None:
     elif flow == "consult":
         await consult.start_after_direction(event, context, direction)
     else:
-        await helpers.show_main_menu(event)
+        await helpers.show_main_menu(event, context)
 
 
 @router.message_callback(Payload(keyboards.P_CONSENT_YES))
@@ -62,12 +62,12 @@ async def consent_yes(event, context: BaseContext) -> None:
 
 @router.message_callback(Payload(keyboards.P_CONSENT_NO))
 async def consent_no(event, context: BaseContext) -> None:
-    await context.clear()
-    await send(event, texts.CONSENT_DECLINED, keyboards.main_menu())
+    await helpers.clear_keeping_screen(context)
+    await render(event, context, texts.CONSENT_DECLINED, keyboards.main_menu())
 
 
 @router.message_created(StateFilter(ConsentSG.wait))
 async def consent_text_fallback(event, context: BaseContext) -> None:
     """Пользователь пишет текст вместо нажатия кнопки согласия."""
     settings = get_settings()
-    await send(event, texts.USE_BUTTONS, keyboards.consent(settings.privacy_policy_url))
+    await render(event, context, texts.USE_BUTTONS + "\n\n" + texts.CONSENT, keyboards.consent(settings.privacy_policy_url))

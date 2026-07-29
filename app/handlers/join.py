@@ -12,7 +12,7 @@ from app.db import repo
 from app.db.models import ApplicationStatus
 from app.db.session import session_scope
 from app.handlers import helpers
-from app.handlers.helpers import send
+from app.handlers.helpers import render
 from app.logging_setup import get_logger
 from app.runtime import runtime
 from app.services import applications
@@ -32,22 +32,22 @@ MAX_ERRORS = 3
 async def ask_fio(event, context: BaseContext) -> None:
     await context.set_state(JoinSG.fio)
     await context.update_data(flow="join")
-    await send(event, texts.ASK_FIO, keyboards.text_step(back=True))
+    await render(event, context, texts.ASK_FIO, keyboards.text_step(back=True))
 
 
 async def ask_phone(event, context: BaseContext) -> None:
     await context.set_state(JoinSG.phone)
-    await send(event, texts.ASK_PHONE, keyboards.phone_step(back=True))
+    await render(event, context, texts.ASK_PHONE, keyboards.phone_step(back=True))
 
 
 async def ask_city(event, context: BaseContext) -> None:
     await context.set_state(JoinSG.city)
-    await send(event, texts.ASK_CITY, keyboards.text_step(back=True))
+    await render(event, context, texts.ASK_CITY, keyboards.text_step(back=True))
 
 
 async def ask_svo(event, context: BaseContext) -> None:
     await context.set_state(JoinSG.svo)
-    await send(event, texts.ASK_SVO, keyboards.svo_step())
+    await render(event, context, texts.ASK_SVO, keyboards.svo_step())
 
 
 async def show_confirm(event, context: BaseContext) -> None:
@@ -59,7 +59,7 @@ async def show_confirm(event, context: BaseContext) -> None:
         city=data.get("city", "—"),
         svo=texts.yes_no(data.get("svo")),
     )
-    await send(event, text, keyboards.join_confirm())
+    await render(event, context, text, keyboards.join_confirm())
 
 
 # --------------------------------------------------------------------------- #
@@ -155,7 +155,7 @@ async def go_back(event, context: BaseContext) -> None:
     state = await context.get_state()
     state = str(state) if state else ""
     steps = {
-        str(JoinSG.fio): helpers.show_main_menu,
+        str(JoinSG.fio): helpers.show_main_menu,  # с первого шага — в меню
         str(JoinSG.phone): ask_fio,
         str(JoinSG.city): ask_phone,
         str(JoinSG.svo): ask_city,
@@ -163,7 +163,7 @@ async def go_back(event, context: BaseContext) -> None:
     }
     handler = steps.get(state, helpers.show_main_menu)
     if handler is helpers.show_main_menu:
-        await context.clear()
+        await helpers.clear_keeping_screen(context)
     await handler(event, context)
 
 
@@ -172,8 +172,8 @@ async def go_back(event, context: BaseContext) -> None:
 # --------------------------------------------------------------------------- #
 @router.message_callback(Payload(keyboards.P_JOIN_RESTART), StateFilter(JoinSG))
 async def restart(event, context: BaseContext) -> None:
-    # Сбрасываем данные анкеты, согласие уже дано.
-    await context.set_data({})
+    # Сбрасываем данные анкеты (согласие уже дано), но сохраняем экран.
+    await helpers.clear_keeping_screen(context)
     await ask_fio(event, context)
 
 
@@ -207,20 +207,23 @@ async def _do_submit(event, context: BaseContext, *, force: bool) -> None:
         )
 
     if result.duplicate and result.application is not None:
-        await send(
+        await render(
             event,
+            context,
             texts.DUPLICATE.format(ticket=result.application.ticket),
             keyboards.duplicate(keyboards.P_JOIN_FORCE),
         )
         return
 
     app = result.application
-    await context.clear()
-    await send(
+    # Рендерим до clear(): иначе id экрана пропадёт и финал уедет новым сообщением
+    await render(
         event,
+        context,
         texts.JOIN_DONE.format(ticket=app.ticket, sla=settings.response_sla_days),
         keyboards.to_menu(),
     )
+    await context.clear()
     try:
         await runtime.notifier.notify(app)
     except Exception as exc:  # noqa: BLE001
@@ -232,12 +235,12 @@ async def _do_submit(event, context: BaseContext, *, force: bool) -> None:
 # --------------------------------------------------------------------------- #
 @router.message_created(StateFilter(JoinSG.svo))
 async def svo_text_fallback(event, context: BaseContext) -> None:
-    await send(event, texts.USE_BUTTONS, keyboards.svo_step())
+    await render(event, context, texts.USE_BUTTONS + "\n\n" + texts.ASK_SVO, keyboards.svo_step())
 
 
 @router.message_created(StateFilter(JoinSG.confirm))
 async def confirm_text_fallback(event, context: BaseContext) -> None:
-    await send(event, texts.USE_BUTTONS, keyboards.join_confirm())
+    await render(event, context, texts.USE_BUTTONS, keyboards.join_confirm())
 
 
 # --------------------------------------------------------------------------- #
@@ -247,9 +250,9 @@ async def _handle_invalid(event, context: BaseContext, field: str, err_text: str
     count = await helpers.bump_error(context, field)
     if count >= MAX_ERRORS:
         await _save_draft(context, event)
-        await send(event, texts.TOO_MANY_ERRORS, keyboards.contact_operator(runtime.operator_url()))
+        await render(event, context, texts.TOO_MANY_ERRORS, keyboards.contact_operator(runtime.operator_url()))
         return
-    await send(event, err_text, kb)
+    await render(event, context, err_text, kb)
 
 
 async def _save_draft(context: BaseContext, event) -> None:
@@ -269,4 +272,4 @@ async def _save_draft(context: BaseContext, event) -> None:
             status=ApplicationStatus.draft,
         )
         await repo.add_event(session, type="join_draft_saved", user_id=user.id)
-    await context.clear()
+    await helpers.clear_keeping_screen(context)
