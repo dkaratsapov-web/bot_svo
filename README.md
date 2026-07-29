@@ -98,9 +98,14 @@ docker compose logs -f bot
 бэкап SQLite с ротацией 30 дней). При старте контейнер сам применяет миграции
 (`alembic upgrade head`) — см. `docker-entrypoint.sh`.
 
-> **Боевое развёртывание с автодеплоем** (рег.облако + GHCR + Watchtower +
-> Caddy/Let's Encrypt) описано в [`DEPLOY.md`](DEPLOY.md): пуш в `main` →
-> сборка образа в GitHub Actions → сервер сам подхватывает новую версию.
+> **Боевое развёртывание — одной командой на сервере:**
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/dkaratsapov-web/bot_svo/main/scripts/install-server.sh | bash
+> ```
+> Скрипт спросит только `BOT_TOKEN` и настроит swap, Docker, автообновление и
+> запуск. Дальше пуш в `main` разворачивается сам: GitHub Actions собирает
+> образ, Watchtower обновляет бота, systemd-таймер подтягивает изменения
+> инфраструктуры. Подробности и переход на webhook — в [`DEPLOY.md`](DEPLOY.md).
 
 БД и бэкапы хранятся в томах `./data` и `./backups` (вне образа и вне
 репозитория).

@@ -1,0 +1,35 @@
+# Overlay для режима webhook: добавляет Caddy с автоматическим TLS.
+# Применяется ВМЕСТЕ с основным файлом:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.webhook.yml up -d
+#
+# Требует в .env: DOMAIN, ACME_EMAIL, MODE=webhook,
+# WEBHOOK_URL=https://<DOMAIN>/max/webhook, WEBHOOK_SECRET.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?нужно задать DOMAIN в .env для режима webhook}
+      ACME_EMAIL: ${ACME_EMAIL:?нужно задать ACME_EMAIL в .env для режима webhook}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - bot
+    mem_limit: 128m
+    logging: *default-logging
+
+volumes:
+  caddy-data:
+  caddy-config:

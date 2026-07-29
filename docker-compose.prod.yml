@@ -1,15 +1,19 @@
 # Production-стек для сервера (рег.облако / любой Ubuntu-VPS).
 # Образ бота тянется из GHCR; обновления накатывает Watchtower автоматически.
 #
-# Запуск на сервере:
+# Режим polling (домен не нужен) — этот файл самодостаточен:
 #   docker compose -f docker-compose.prod.yml up -d
 #
-# Требуется заполненный .env (см. .env.example), в т.ч. IMAGE, DOMAIN, ACME_EMAIL,
-# MODE=webhook, WEBHOOK_URL=https://$DOMAIN/max/webhook.
+# Режим webhook (нужен домен) — добавьте overlay с Caddy и TLS:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.webhook.yml up -d
+#
+# Caddy намеренно вынесен в отдельный файл, а не в compose-профиль: поведение
+# профилей различается между версиями Compose, и Caddy без DOMAIN уходил
+# в бесконечный рестарт.
 #
 # Конфигурация рассчитана на скромный сервер (1 vCPU / 1 ГБ / 10 ГБ):
 # ограничена память Redis, включена ротация логов, заданы лимиты памяти.
-# На 1 ГБ обязательно настройте swap — см. DEPLOY.md, шаг 3.
+# На 1 ГБ обязательно настройте swap (это делает scripts/install-server.sh).
 
 # Ротация логов: без неё JSON-логи structlog со временем забьют диск.
 x-logging: &default-logging
@@ -34,7 +38,8 @@ services:
     labels:
       # Watchtower обновляет только контейнеры с этой меткой.
       com.centurylinklabs.watchtower.enable: "true"
-    # Порт наружу не публикуем — доступ только через Caddy.
+    # Порт наружу не публикуем: в polling он не нужен, в webhook доступ
+    # идёт через Caddy из docker-compose.webhook.yml.
     expose:
       - "8080"
     healthcheck:
@@ -75,30 +80,6 @@ services:
     mem_limit: 192m
     logging: *default-logging
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    # Профиль webhook: Caddy нужен только когда есть домен и MODE=webhook.
-    # Без домена стек поднимается в polling-режиме без этого сервиса:
-    #   docker compose -f docker-compose.prod.yml up -d
-    # С доменом (webhook):
-    #   docker compose -f docker-compose.prod.yml --profile webhook up -d
-    profiles: ["webhook"]
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - bot
-    mem_limit: 128m
-    logging: *default-logging
-
   watchtower:
     image: containrrr/watchtower
     restart: unless-stopped
@@ -130,5 +111,3 @@ services:
 
 volumes:
   redis-data:
-  caddy-data:
-  caddy-config:

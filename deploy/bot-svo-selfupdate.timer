@@ -1,0 +1,12 @@
+[Unit]
+Description=bot_svo: периодическая проверка обновлений инфраструктуры
+
+[Timer]
+# Первый запуск через 3 минуты после загрузки, далее каждые 5 минут
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

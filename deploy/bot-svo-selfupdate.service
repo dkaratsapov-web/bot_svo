@@ -1,0 +1,11 @@
+[Unit]
+Description=bot_svo: подтянуть изменения из git и применить docker compose
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/bot_svo
+Environment=APP_DIR=/opt/bot_svo
+Environment=BRANCH=main
+ExecStart=/opt/bot_svo/scripts/selfupdate.sh
