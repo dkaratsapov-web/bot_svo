@@ -32,6 +32,7 @@ BOT_COMMANDS = [
     BotCommand(name="menu", description="Главное меню"),
     BotCommand(name="help", description="Справка и контакты"),
     BotCommand(name="cancel", description="Отменить текущую заявку"),
+    BotCommand(name="whoami", description="Показать ID пользователя и чата"),
 ]
 
 

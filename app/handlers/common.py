@@ -11,9 +11,11 @@ from app import keyboards, texts
 from app.config import get_settings
 from app.handlers import helpers
 from app.handlers.helpers import render, send
+from app.logging_setup import get_logger
 from app.states import ConsentSG, ConsultSG, JoinSG
 from app.utils.filters import Payload
 
+log = get_logger("common")
 router = Router()
 # Роутер-«ловушка» для неопознанных событий — подключается последним.
 fallback_router = Router()
@@ -56,6 +58,35 @@ async def cb_menu(event, context: BaseContext) -> None:
 async def cmd_help(event, context: BaseContext) -> None:
     s = get_settings()
     await send(event, texts.HELP.format(phone=s.org_phone or "—", email=s.org_email or "—"))
+
+
+# --------------------------------------------------------------------------- #
+# Служебное: идентификаторы для настройки
+# --------------------------------------------------------------------------- #
+@router.message_created(Command("whoami"))
+async def cmd_whoami(event, context: BaseContext) -> None:
+    """Сообщает user_id и chat_id — их нужно вписать в .env.
+
+    API MAX не отдаёт список чатов бота (GET /chats отключён с июня 2026),
+    поэтому идентификаторы приходится узнавать так.
+    """
+    max_user_id, chat_id, _, _ = helpers.user_meta(event)
+    await send(event, texts.WHOAMI.format(user_id=max_user_id, chat_id=chat_id or "—"))
+
+
+@router.bot_added()
+async def on_bot_added(event, context: BaseContext) -> None:
+    """Бота добавили в чат — сразу сообщаем chat_id для настройки уведомлений."""
+    log.info("bot_added_to_chat", chat_id=event.chat_id, is_channel=event.is_channel)
+    if event.bot is None:
+        return
+    try:
+        await event.bot.send_message(
+            chat_id=event.chat_id,
+            text=texts.CHAT_REGISTERED.format(chat_id=event.chat_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("bot_added_reply_failed", chat_id=event.chat_id, error=str(exc))
 
 
 # --------------------------------------------------------------------------- #
